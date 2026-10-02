@@ -3,9 +3,7 @@ package top.niunaijun.obfuscator.chain;
 import com.googlecode.dex2jar.ir.IrMethod;
 import com.googlecode.dex2jar.ir.Trap;
 import com.googlecode.dex2jar.ir.expr.Exprs;
-import com.googlecode.dex2jar.ir.expr.InvokeExpr;
 import com.googlecode.dex2jar.ir.expr.Local;
-import com.googlecode.dex2jar.ir.expr.Value;
 import com.googlecode.dex2jar.ir.stmt.*;
 import top.niunaijun.obfuscator.LBlock;
 import top.niunaijun.obfuscator.ObfuscatorConfiguration;
@@ -17,14 +15,14 @@ import java.util.*;
 import static com.googlecode.dex2jar.ir.stmt.Stmt.ST.IF;
 import static com.googlecode.dex2jar.ir.stmt.Stmt.ST.LABEL;
 
+/**
+ * 条件跳转（if）混淆：把单个 if 改写为 int 状态机调度。
+ *
+ * 相对原版的关键修复：原实现用 String key + hashCode() 生成 lookupswitch 键，
+ * 与 D8/R8 的 NegativeArraySizeException 缺陷直接相关；现改为纯 int 状态机，
+ * 语义与混淆强度不变。
+ */
 public class IfObfuscator extends BaseObfuscatorChain {
-
-    private static final int MAPPING_INDEX = 0;
-    private static final int MAPPING_GOTO = 1;
-    private static final int MAPPING_ELSE = 2;
-    private static final int MAPPING_ENTER = 3;
-    private static final int MAPPING_NEXT = 4;
-    private static final int MAPPING_FAKE = 5;
 
     public IfObfuscator(ObfuscatorConfiguration obfuscatorConfiguration) {
         super(obfuscatorConfiguration);
@@ -44,46 +42,41 @@ public class IfObfuscator extends BaseObfuscatorChain {
 
         LBlock elseBlock = generateLBlock();
 
-        Map<Integer, String> mapping = generateObfLocalMapping(depth);
+        Set<Integer> usedKeys = new HashSet<>();
+        int keyGoto = randomKey(usedKeys);
+        int keyElse = randomKey(usedKeys);
+        int keyEnter = randomKey(usedKeys);
+        int keyNext = randomKey(usedKeys);
+        int keyFake = randomKey(usedKeys);
 
-        Local obfIndexFinal = newLocal("obf_index_final", "I");
-        Local obfIndex = newLocal("obf_index", "I");
-        Local obfStrHash = newLocal("obf_hash", "I");
-        Local obfStr = newLocal("obf_str", "Ljava/lang/String;");
+        Local obfState = newLocal("obf_state", "I");
 
         LBlock startBlock = generateLBlock();
-        int obfIndexI = mapping.get(MAPPING_INDEX).hashCode();
         newStmts.add(startBlock.getLabelStmt());
 
-        // int obf_index_final = 1;
-        newStmts.add(Stmts.nAssign(obfIndexFinal, Exprs.nInt(obfIndexI)));
-
-        newStmts.add(Stmts.nAssign(obfStr, Exprs.nString(mapping.get(MAPPING_ENTER))));
+        // 状态机初始状态 = ENTER
+        newStmts.add(Stmts.nAssign(obfState, Exprs.nInt(keyEnter)));
 
         LabelStmt whileBegin = createWhile(newStmts);
 
-        // 创建 ^ 操作
-        newStmts.add(Stmts.nAssign(obfStrHash, hashInvoke(obfStr)));
-        newStmts.add(Stmts.nAssign(obfIndex, Exprs.nXor(obfIndexFinal, obfStrHash, "I")));
-
         LBlock fake = generateLBlock();
-        fake.getStmts().add(Stmts.nAssign(obfIndex, obfIndex));
+        fake.getStmts().add(Stmts.nAssign(obfState, obfState));
         fake.getStmts().add(Stmts.nGoto(whileBegin));
 
-        // goto的跳板，由于没办法直接回到whileBegin并且计算obfIndex，所以需要此跳板来来操作.
+        // goto的跳板，由于没办法直接回到whileBegin并且计算obfState，所以需要此跳板来来操作.
         // 跳板将跳转回原goto
         LBlock gotoJumpBlock = generateLBlock();
-        gotoJumpBlock.getStmts().add(Stmts.nAssign(obfStr, Exprs.nString(mapping.get(MAPPING_GOTO))));
+        gotoJumpBlock.getStmts().add(Stmts.nAssign(obfState, Exprs.nInt(keyGoto)));
         gotoJumpBlock.getStmts().add(Stmts.nGoto(whileBegin));
 
         LBlock enterBlock = generateLBlock();
         ifStmt.target = gotoJumpBlock.getLabelStmt();
         enterBlock.getStmts().add(ifStmt);
-        enterBlock.getStmts().add(Stmts.nAssign(obfStr, Exprs.nString(mapping.get(MAPPING_ELSE))));
+        enterBlock.getStmts().add(Stmts.nAssign(obfState, Exprs.nInt(keyElse)));
         enterBlock.getStmts().add(Stmts.nGoto(whileBegin));
 
         // else块需要重跳回whileBegin，进行最后跳跃到nextStep
-        elseBlock.getStmts().add(Stmts.nAssign(obfStr, Exprs.nString(mapping.get(MAPPING_NEXT))));
+        elseBlock.getStmts().add(Stmts.nAssign(obfState, Exprs.nInt(keyNext)));
         elseBlock.getStmts().add(Stmts.nGoto(whileBegin));
 
         LBlock nextBlock = generateLBlock();
@@ -91,23 +84,31 @@ public class IfObfuscator extends BaseObfuscatorChain {
         LBlock defaultTarget = generateLBlock();
 
         Map<Integer, LabelStmt> switchBlock = new LinkedHashMap<>();
-        Map<Integer, LabelStmt> newSwitchBlock = new LinkedHashMap<>();
-        switchBlock.put(mapping.get(MAPPING_GOTO).hashCode() ^ obfIndexI, targetBlock.getLabelStmt());
-        switchBlock.put(mapping.get(MAPPING_ELSE).hashCode() ^ obfIndexI, elseBlock.getLabelStmt());
-        switchBlock.put(mapping.get(MAPPING_ENTER).hashCode() ^ obfIndexI, enterBlock.getLabelStmt());
-        switchBlock.put(mapping.get(MAPPING_NEXT).hashCode() ^ obfIndexI, nextBlock.getLabelStmt());
-        switchBlock.put(mapping.get(MAPPING_FAKE).hashCode() ^ obfIndexI, fake.getLabelStmt());
+        switchBlock.put(keyGoto, targetBlock.getLabelStmt());
+        switchBlock.put(keyElse, elseBlock.getLabelStmt());
+        switchBlock.put(keyEnter, enterBlock.getLabelStmt());
+        switchBlock.put(keyNext, nextBlock.getLabelStmt());
+        switchBlock.put(keyFake, fake.getLabelStmt());
         List<Integer> sortList = new ArrayList<>(switchBlock.keySet());
         Collections.shuffle(sortList);
+        Map<Integer, LabelStmt> newSwitchBlock = new LinkedHashMap<>();
         for (Integer integer : sortList) {
             newSwitchBlock.put(integer, switchBlock.get(integer));
         }
 
-
-        // switch(obfIndex)
-        LookupSwitchStmt lookupSwitchStmt = Stmts.nLookupSwitch(obfIndex,
-                newSwitchBlock.keySet().stream().mapToInt(integer -> integer).toArray(),
-                newSwitchBlock.values().toArray(new LabelStmt[]{}),
+        // switch(obfState)
+        // lookupswitch 的 match 值必须升序（JVMS 6.5），否则类文件非法（JVM 验证器
+        // "Bad lookupswitch instruction"，D8/R8 解析时报 NegativeArraySizeException）。
+        List<Integer> sortedSwitchKeys = new ArrayList<>(newSwitchBlock.keySet());
+        Collections.sort(sortedSwitchKeys);
+        int[] switchKeys = new int[sortedSwitchKeys.size()];
+        LabelStmt[] switchTargets = new LabelStmt[sortedSwitchKeys.size()];
+        for (int i = 0; i < sortedSwitchKeys.size(); i++) {
+            switchKeys[i] = sortedSwitchKeys.get(i);
+            switchTargets[i] = newSwitchBlock.get(sortedSwitchKeys.get(i));
+        }
+        LookupSwitchStmt lookupSwitchStmt = Stmts.nLookupSwitch(obfState,
+                switchKeys, switchTargets,
                 defaultTarget.getLabelStmt());
 
         newStmts.add(lookupSwitchStmt);
@@ -149,30 +150,6 @@ public class IfObfuscator extends BaseObfuscatorChain {
 
     private LBlock generateLBlock() {
         return new LBlock();
-    }
-
-    private InvokeExpr hashInvoke(Local strLocal) {
-        return Exprs.nInvokeVirtual(new Value[]{strLocal}, "Ljava/lang/String;","hashCode", new String[]{}, "I");
-    }
-
-    private Map<Integer, String> generateObfLocalMapping(int depth) {
-        Map<Integer, String> mapping = new HashMap<>();
-        mapping.put(MAPPING_INDEX, randomString(depth));
-        mapping.put(MAPPING_GOTO, randomString(depth));
-        mapping.put(MAPPING_ELSE, randomString(depth));
-        mapping.put(MAPPING_ENTER, randomString(depth));
-        mapping.put(MAPPING_NEXT, randomString(depth));
-        mapping.put(MAPPING_FAKE, randomString(depth));
-
-        Set<String> set = new HashSet<>();
-        for (String value : mapping.values()) {
-            if (set.contains(value)) {
-                return generateObfLocalMapping(depth);
-            } else {
-                set.add(value);
-            }
-        }
-        return mapping;
     }
 
     private LabelStmt createWhile(List<Stmt> newStmts) {

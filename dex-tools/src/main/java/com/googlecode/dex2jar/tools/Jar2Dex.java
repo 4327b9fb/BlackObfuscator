@@ -18,15 +18,17 @@ package com.googlecode.dex2jar.tools;
 
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.nio.file.StandardCopyOption;
+import java.util.stream.Stream;
 
-@BaseCmd.Syntax(cmd = "d2j-jar2dex", syntax = "[options] <dir>", desc = "Convert jar to dex by invoking dx.")
+import com.android.tools.r8.D8;
+import com.android.tools.r8.D8Command;
+import com.android.tools.r8.OutputMode;
+
+@BaseCmd.Syntax(cmd = "d2j-jar2dex", syntax = "[options] <dir>", desc = "Convert jar to dex by invoking D8.")
 public class Jar2Dex extends BaseCmd {
     public static void main(String... args) {
         new Jar2Dex().doMain(args);
@@ -36,6 +38,8 @@ public class Jar2Dex extends BaseCmd {
     private boolean forceOverwrite = false;
     @Opt(opt = "o", longOpt = "output", description = "output .dex file, default is $current_dir/[jar-name]-jar2dex.dex", argName = "out-dex-file")
     private Path output;
+    @Opt(opt = "l", longOpt = "library", description = "android.jar (or other library jar) to add as D8 library classpath for interface desugaring", argName = "android-jar")
+    private Path library;
 
     @Override
     protected void doCommandLine() throws Exception {
@@ -89,14 +93,41 @@ public class Jar2Dex extends BaseCmd {
 
             System.out.println("jar2dex " + realJar + " -> " + output);
 
-            Class<?> c = Class.forName("com.android.dx.command.Main");
-            Method m = c.getMethod("main", String[].class);
-
-            List<String> ps = new ArrayList<String>();
-            ps.addAll(Arrays.asList("--dex", "--no-strict", "--output=" + output.toAbsolutePath().toString(), realJar
-                    .toAbsolutePath().toString()));
-            System.out.println("call com.android.dx.command.Main.main" + ps);
-            m.invoke(null, new Object[] { ps.toArray(new String[ps.size()]) });
+            // Modern replacement of com.android.dx: use D8 (com.android.tools:r8).
+            // The old code called com.android.dx.command.Main reflectively, which is
+            // no longer shipped by AGP 7+/8+ and fails on compileSdk 31+ / JDK 17.
+            // D8 only writes to an existing directory (or .zip/.jar), so we write to a
+            // temp dir and move the produced classes.dex to the requested output file.
+            Path outDir = output.toAbsolutePath().getParent();
+            if (outDir != null) {
+                Files.createDirectories(outDir);
+            }
+            Path d8Out = Files.createTempDirectory("d2j-jar2dex");
+            try {
+                D8Command.Builder builder = D8Command.builder()
+                        .addProgramFiles(realJar)
+                        .setOutput(d8Out, OutputMode.DexIndexed)
+                        .setMinApiLevel(21);
+                if (library != null && Files.exists(library)) {
+                    builder.addLibraryFiles(library);
+                }
+                D8.run(builder.build());
+                Path produced = d8Out.resolve("classes.dex");
+                if (!Files.exists(produced)) {
+                    // D8 may emit multiple dex files; keep only the first for this single-jar input
+                    try (Stream<Path> s = Files.list(d8Out)) {
+                        produced = s.filter(p -> p.getFileName().toString().endsWith(".dex"))
+                                .findFirst().orElse(produced);
+                    }
+                }
+                Files.deleteIfExists(output);
+                Files.move(produced, output, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                try (Stream<Path> s = Files.list(d8Out)) {
+                    s.forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
+                }
+                Files.deleteIfExists(d8Out);
+            }
         } finally {
             if (tmp != null) {
                 Files.deleteIfExists(tmp);

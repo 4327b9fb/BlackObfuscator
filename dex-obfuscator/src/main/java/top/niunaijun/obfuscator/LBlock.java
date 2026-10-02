@@ -4,69 +4,72 @@ import com.googlecode.dex2jar.ir.Trap;
 import com.googlecode.dex2jar.ir.stmt.LabelStmt;
 import com.googlecode.dex2jar.ir.stmt.Stmt;
 import com.googlecode.dex2jar.ir.stmt.Stmts;
+
 import org.objectweb.asm2.Label;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class LBlock {
-	private LabelStmt labelStmt;
-	private List<Stmt> stmts = new ArrayList<>();
-	private String key = "";
-	private String nextKey = "";
-	private Trap trap;
+    public static final String NO_KEY = null;
 
-	public LBlock() {
-		this.labelStmt = Stmts.nLabel();
-		this.labelStmt.tag = new Label();
-	}
+    private LabelStmt labelStmt;
+    private List<Stmt> stmts = new ArrayList<>();
+    private String key = NO_KEY;
+    private String nextKey = NO_KEY;
+    private Trap trap;
 
-	public LBlock(LabelStmt labelStmt) {
-		this.labelStmt = labelStmt;
-	}
+    public LBlock() {
+        this.labelStmt = Stmts.nLabel();
+        this.labelStmt.tag = new Label();
+    }
 
-	public LBlock(LabelStmt labelStmt, List<Stmt> stmts) {
-		this.labelStmt = labelStmt;
-		this.stmts = stmts;
-	}
+    public LBlock(LabelStmt labelStmt) {
+        this.labelStmt = labelStmt;
+    }
 
-	public LabelStmt getLabelStmt() {
-		return labelStmt;
-	}
+    public LBlock(LabelStmt labelStmt, List<Stmt> stmts) {
+        this.labelStmt = labelStmt;
+        this.stmts = stmts;
+    }
 
-	public void setLabelStmt(LabelStmt labelStmt) {
-		this.labelStmt = labelStmt;
-	}
+    public LabelStmt getLabelStmt() {
+        return labelStmt;
+    }
 
-	public List<Stmt> getStmts() {
-		return stmts;
-	}
+    public void setLabelStmt(LabelStmt labelStmt) {
+        this.labelStmt = labelStmt;
+    }
 
-	public void setStmts(List<Stmt> stmts) {
-		this.stmts = stmts;
-	}
+    public List<Stmt> getStmts() {
+        return stmts;
+    }
 
-	public String getKey() {
-		return key;
-	}
+    public void setStmts(List<Stmt> stmts) {
+        this.stmts = stmts;
+    }
 
-	public void setKey(String key) {
-		this.key = key;
-	}
+    public String getKey() {
+        return key;
+    }
 
-	public String getNextKey() {
-		return nextKey;
-	}
+    public void setKey(String key) {
+        this.key = key;
+    }
 
-	public void setNextKey(String nextKey) {
-		this.nextKey = nextKey;
-	}
+    public String getNextKey() {
+        return nextKey;
+    }
 
-	public Trap getTrap() {
-		return trap;
-	}
+    public void setNextKey(String nextKey) {
+        this.nextKey = nextKey;
+    }
 
-	public void setTrap(Trap trap) {
-		this.trap = trap;
-	}
+    public Trap getTrap() {
+        return trap;
+    }
+
+    public void setTrap(Trap trap) {
+        this.trap = trap;
+    }
 }
