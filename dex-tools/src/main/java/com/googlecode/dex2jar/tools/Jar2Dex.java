@@ -40,6 +40,8 @@ public class Jar2Dex extends BaseCmd {
     private Path output;
     @Opt(opt = "l", longOpt = "library", description = "android.jar (or other library jar) to add as D8 library classpath for interface desugaring", argName = "android-jar")
     private Path library;
+    @Opt(opt = "min-api", longOpt = "min-api", description = "minimum API level for D8 dex output, default 21", argName = "min-api-level")
+    private int minApi = 21;
 
     @Override
     protected void doCommandLine() throws Exception {
@@ -107,7 +109,7 @@ public class Jar2Dex extends BaseCmd {
                 D8Command.Builder builder = D8Command.builder()
                         .addProgramFiles(realJar)
                         .setOutput(d8Out, OutputMode.DexIndexed)
-                        .setMinApiLevel(21);
+                        .setMinApiLevel(minApi);
                 if (library != null && Files.exists(library)) {
                     builder.addLibraryFiles(library);
                 }

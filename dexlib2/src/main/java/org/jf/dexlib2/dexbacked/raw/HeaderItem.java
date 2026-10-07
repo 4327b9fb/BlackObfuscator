@@ -237,9 +237,15 @@ public class HeaderItem {
 		if (api < 24) {
 			// Prior to Android N we only support dex version 035.
 			return getMagicForDexVersion(35);
-		} else {
-			// On android N and later we support dex version 037.
+		} else if (api < 26) {
+			// Android N / O MR1: dex version 037 (API 24-25)
 			return getMagicForDexVersion(37);
+		} else if (api < 28) {
+			// Android O: dex version 038 (API 26-27)
+			return getMagicForDexVersion(38);
+		} else {
+			// Android P+: dex version 039 (API 28+)
+			return getMagicForDexVersion(39);
 		}
 	}
 

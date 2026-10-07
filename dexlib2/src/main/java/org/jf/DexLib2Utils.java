@@ -24,7 +24,7 @@ public class DexLib2Utils {
 	public static boolean saveDex(File in, File out) {
 		try {
 			DexBackedDexFile dexBackedDexFile = loadBackedDexFile(in.getAbsolutePath());
-			DexBuilder dexBuilder = new DexBuilder(Opcodes.getDefault());
+			DexBuilder dexBuilder = new DexBuilder(getOpcodesOf(in.getAbsolutePath()));
 			Set<? extends DexBackedClassDef> defs = dexBackedDexFile.getClasses();
 			for (DexBackedClassDef def : defs) {
 				Smali.assembleSmaliFile(classToSmali(def), dexBuilder, new SmaliOptions());
@@ -57,7 +57,7 @@ public class DexLib2Utils {
 			}
 
 			DexBackedDexFile dexBackedDexFile = loadBackedDexFile(in.getAbsolutePath());
-			DexBuilder dexBuilder = new DexBuilder(Opcodes.getDefault());
+			DexBuilder dexBuilder = new DexBuilder(getOpcodesOf(in.getAbsolutePath()));
 			Set<? extends DexBackedClassDef> defs = dexBackedDexFile.getClasses();
 
 			List<String> allowList = new ArrayList<>();
@@ -88,7 +88,9 @@ public class DexLib2Utils {
 			DexBackedDexFile mainDexFile = loadBackedDexFile(mainDex.getAbsolutePath());
 			DexBackedDexFile secondDexFile = loadBackedDexFile(secondDex.getAbsolutePath());
 
-			DexBuilder dexBuilder = new DexBuilder(Opcodes.getDefault());
+			// 写回版本跟随 secondDex（混淆产物，Jar2Dex 已按 min-api 输出目标版本），
+			// 避免 merger 按 input 的中间版本降级
+			DexBuilder dexBuilder = new DexBuilder(getOpcodesOf(secondDex.getAbsolutePath()));
 			List<String> inserted = new ArrayList<>();
 			Set<? extends DexBackedClassDef> secondDefs = secondDexFile.getClasses();
 			for (DexBackedClassDef def : secondDefs) {
@@ -179,9 +181,41 @@ public class DexLib2Utils {
 	private static DexBackedDexFile loadBackedDexFile(String path) throws IOException {
 		FileInputStream fileInputStream = new FileInputStream(path);
 		BufferedInputStream bufferedInputStream = new BufferedInputStream(fileInputStream);
-		DexBackedDexFile dexBackedDexFile = DexBackedDexFile.fromInputStream(Opcodes.getDefault(), bufferedInputStream);
+		DexBackedDexFile dexBackedDexFile = DexBackedDexFile.fromInputStream(getOpcodesOf(path), bufferedInputStream);
 		fileInputStream.close();
 		bufferedInputStream.close();
 		return dexBackedDexFile;
+	}
+
+	/**
+	 * 按 dex 头部的版本号构造 Opcodes，避免 dexlib2 写回时统一降级到 035。
+	 * 版本对应：035/036 -> api 23，037 -> api 24，038 -> api 26，039+ -> api 28。
+	 */
+	private static Opcodes getOpcodesOf(String dexPath) {
+		try (DataInputStream in = new DataInputStream(new FileInputStream(dexPath))) {
+			byte[] magic = new byte[8];
+			in.readFully(magic);
+			String ver = new String(magic, 4, 3, java.nio.charset.StandardCharsets.US_ASCII);
+			int api;
+			switch (ver) {
+				case "035":
+				case "036":
+					api = 23;
+					break;
+				case "037":
+					api = 24;
+					break;
+				case "038":
+					api = 26;
+					break;
+				case "039":
+				default:
+					api = 28;
+					break;
+			}
+			return Opcodes.forApi(api);
+		} catch (Exception e) {
+			return Opcodes.getDefault();
+		}
 	}
 }
