@@ -16,7 +16,6 @@
  */
 package com.googlecode.dex2jar.tools;
 
-import com.android.dex.util.FileUtils;
 import com.googlecode.d2j.dex.Dex2jar;
 import com.googlecode.d2j.reader.DexFileReader;
 import com.googlecode.dex2jar.ir.ET;
@@ -25,10 +24,10 @@ import top.niunaijun.obfuscator.ObfuscatorConfiguration;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 @BaseCmd.Syntax(cmd = "d2j-black-obfuscator", syntax = "[options] <file0> [file1 ... fileN]", desc = "convert dex to jar")
@@ -165,13 +164,13 @@ public class BlackObfuscatorCmd extends BaseCmd {
     }
 
 
-    private void dealAllowList() {
+    private void dealAllowList() throws IOException {
         if (!allowList.toFile().exists()) {
             System.out.println("Allow Rule File Not Exists");
             return;
         }
 
-        String allowRule = new String(FileUtils.readFile(allowList.toFile()));
+        String allowRule = new String(Files.readAllBytes(allowList.toFile().toPath()));
 
         for (String rule : allowRule.split("\n")) {
             rule = rule.trim();

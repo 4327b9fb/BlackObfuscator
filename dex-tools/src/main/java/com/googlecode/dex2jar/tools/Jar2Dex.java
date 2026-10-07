@@ -16,6 +16,10 @@
  */
 package com.googlecode.dex2jar.tools;
 
+import com.android.tools.r8.D8;
+import com.android.tools.r8.D8Command;
+import com.android.tools.r8.OutputMode;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.FileSystem;
@@ -23,10 +27,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.stream.Stream;
-
-import com.android.tools.r8.D8;
-import com.android.tools.r8.D8Command;
-import com.android.tools.r8.OutputMode;
 
 @BaseCmd.Syntax(cmd = "d2j-jar2dex", syntax = "[options] <dir>", desc = "Convert jar to dex by invoking D8.")
 public class Jar2Dex extends BaseCmd {
@@ -124,7 +124,12 @@ public class Jar2Dex extends BaseCmd {
                 Files.move(produced, output, StandardCopyOption.REPLACE_EXISTING);
             } finally {
                 try (Stream<Path> s = Files.list(d8Out)) {
-                    s.forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
+                    s.forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException ignored) {
+                        }
+                    });
                 }
                 Files.deleteIfExists(d8Out);
             }

@@ -15,13 +15,9 @@
  */
 package com.googlecode.dex2jar.test;
 
-import com.android.dx.cf.direct.DirectClassFile;
-import com.android.dx.cf.direct.StdAttributeFactory;
-import com.android.dx.cf.iface.ParseException;
-import com.android.dx.command.dexer.DxContext;
-import com.android.dx.dex.DexOptions;
-import com.android.dx.dex.cf.CfOptions;
-import com.android.dx.dex.cf.CfTranslator;
+import com.android.tools.r8.D8;
+import com.android.tools.r8.D8Command;
+import com.android.tools.r8.OutputMode;
 import com.googlecode.d2j.DexConstants;
 import com.googlecode.d2j.DexException;
 import com.googlecode.d2j.dex.ClassVisitorFactory;
@@ -62,6 +58,7 @@ import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -110,34 +107,33 @@ public abstract class TestUtils {
     }
 
     public static File dexP(List<Path> files, File distFile) throws Exception {
-        Class<?> c = com.android.dx.command.Main.class;
-        Method m = c.getMethod("main", String[].class);
-
-        if (distFile == null) {
-            distFile = File.createTempFile("dex", ".dex");
-        }
-        List<String> args = new ArrayList<String>();
-        args.addAll(Arrays.asList("--dex", "--no-strict", "--output=" + distFile.getCanonicalPath()));
-        for (Path f : files) {
-            args.add(f.toAbsolutePath().toString());
-        }
-        m.invoke(null, new Object[] { args.toArray(new String[0]) });
-        return distFile;
+        return dex(new ArrayList<>(), distFile, files);
     }
 
     public static File dex(List<File> files, File distFile) throws Exception {
-        Class<?> c = com.android.dx.command.Main.class;
-        Method m = c.getMethod("main", String[].class);
+        return dex(files, distFile, null);
+    }
 
+    private static File dex(List<File> files, File distFile, List<Path> paths) throws Exception {
         if (distFile == null) {
             distFile = File.createTempFile("dex", ".dex");
         }
-        List<String> args = new ArrayList<String>();
-        args.addAll(Arrays.asList("--dex", "--no-strict", "--output=" + distFile.getCanonicalPath()));
-        for (File f : files) {
-            args.add(f.getCanonicalPath());
+        List<Path> programFiles = new ArrayList<>();
+        if (paths != null) {
+            programFiles.addAll(paths);
         }
-        m.invoke(null, new Object[] { args.toArray(new String[0]) });
+        for (File f : files) {
+            programFiles.add(f.toPath());
+        }
+        // D8's setOutput requires a directory or zip/jar archive, never a bare .dex file
+        Path outDir = Files.createTempDirectory("dexout");
+        D8Command.Builder builder = D8Command.builder()
+                .addProgramFiles(programFiles)
+                .setOutput(outDir, OutputMode.DexIndexed)
+                .setMinApiLevel(21);
+        D8.run(builder.build());
+        Files.move(outDir.resolve("classes.dex"), distFile.toPath(),
+                StandardCopyOption.REPLACE_EXISTING);
         return distFile;
     }
 
@@ -331,25 +327,18 @@ public abstract class TestUtils {
         ClassReader cr = new ClassReader(data);
         TestUtils.verify(cr);
 
-        // 3. convert back to dex
-        CfOptions cfOptions = new CfOptions();
-        cfOptions.strictNameCheck = false;
-        DexOptions dexOptions = new DexOptions();
-        if (fileNode != null && fileNode.dexVersion >= DexConstants.DEX_037) {
-            dexOptions.minSdkVersion = 26;
-        }
-
-        DirectClassFile dcf = new DirectClassFile(data, rca.getClassName() + ".class", true);
-        dcf.setAttributeFactory(new StdAttributeFactory());
-        com.android.dx.dex.file.DexFile dxFile = new com.android.dx.dex.file.DexFile(dexOptions);
+        // 3. convert back to dex with D8 (validates the round-trip is accepted by the dex compiler)
         try {
-            CfTranslator.translate(new DxContext(), dcf, data, cfOptions, dexOptions, dxFile);
-        } catch (ParseException e) {
-            if ("MethodHandle not supported".equals(e.getMessage())) {
-                e.printStackTrace();
-            } else {
-                throw e;
-            }
+            Path tmpClass = Files.createTempFile("translate", ".class");
+            Files.write(tmpClass, data);
+            Path outDir = Files.createTempDirectory("dexout");
+            D8Command.Builder builder = D8Command.builder()
+                    .addProgramFiles(tmpClass)
+                    .setOutput(outDir, OutputMode.DexIndexed)
+                    .setMinApiLevel(fileNode != null && fileNode.dexVersion >= DexConstants.DEX_037 ? 26 : 21);
+            D8.run(builder.build());
+        } catch (Exception e) {
+            throw new DexException(e, "D8 round-trip failed");
         }
         return data;
     }
