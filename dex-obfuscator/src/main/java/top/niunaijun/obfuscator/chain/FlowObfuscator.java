@@ -68,7 +68,8 @@ public class FlowObfuscator extends BaseObfuscatorChain {
         // 寄存器类型安全（与参数共享物理寄存器、活跃区间跨 case，ART 校验失败），
         // 此类方法整体回退原样（Sub/If 链仍会执行）。
         if (ir.traps.size() > 0 || ir.name.equals("<init>")
-                || containsNewExpr(ir) || containsRecursiveCall(ir) || hasSwitch(ir)) {
+                || containsNewExpr(ir) || containsRecursiveCall(ir) || hasSwitch(ir)
+                || containsArrayRef(ir)) {
             newStmts.addAll(origStmts);
             return;
         }
@@ -387,6 +388,58 @@ public class FlowObfuscator extends BaseObfuscatorChain {
         for (Stmt s : ir.stmts) {
             if (s instanceof LookupSwitchStmt) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsArrayRef(IrMethod ir) {
+        // 数组类型局部变量经 Flow 状态机重排后，同一物理寄存器在 case 间被
+        // 赋数组/非数组类型（如 String[] 与 String），活跃区间重叠导致 D8/R8
+        // 类型推断崩溃（实测 AppListSorter.search：arraylength 处栈槽被推断为
+        // Object / Invalid descriptor char）。此类方法整体回退原样。
+        for (Stmt s : ir.stmts) {
+            if (arrayTypeValue(s.getOp(), new HashSet<Value>())
+                    || arrayTypeValue(s.getOp1(), new HashSet<Value>())
+                    || arrayTypeValue(s.getOp2(), new HashSet<Value>())) {
+                return true;
+            }
+            Value[] ops = s.getOps();
+            if (ops != null) {
+                for (Value v : ops) {
+                    if (arrayTypeValue(v, new HashSet<Value>())) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean arrayTypeValue(Value v, Set<Value> seen) {
+        if (v == null || !seen.add(v)) {
+            return false;
+        }
+        if (v.vt == Value.VT.ARRAY || v.vt == Value.VT.LENGTH
+                || v.vt == Value.VT.NEW_ARRAY || v.vt == Value.VT.NEW_MUTI_ARRAY
+                || v.vt == Value.VT.FILLED_ARRAY) {
+            return true;
+        }
+        if (v instanceof InvokeExpr) {
+            String ret = ((InvokeExpr) v).getRet();
+            if (ret != null && ret.length() > 1 && ret.charAt(0) == '[') {
+                return true;
+            }
+        }
+        if (arrayTypeValue(v.getOp1(), seen) || arrayTypeValue(v.getOp2(), seen)) {
+            return true;
+        }
+        Value[] ops = v.getOps();
+        if (ops != null) {
+            for (Value o : ops) {
+                if (arrayTypeValue(o, seen)) {
+                    return true;
+                }
             }
         }
         return false;

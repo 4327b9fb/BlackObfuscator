@@ -1,13 +1,13 @@
 /*
  * dex2jar - Tools to work with android .dex and java .class files
  * Copyright (c) 2009-2012 Panxiaobo
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,6 +15,21 @@
  * limitations under the License.
  */
 package com.googlecode.d2j.dex;
+
+import com.googlecode.d2j.converter.IR2JConverter;
+import com.googlecode.d2j.node.DexFileNode;
+import com.googlecode.d2j.node.DexMethodNode;
+import com.googlecode.d2j.reader.BaseDexFileReader;
+import com.googlecode.d2j.reader.DexFileReader;
+import com.googlecode.d2j.reader.zip.ZipUtil;
+import com.googlecode.dex2jar.ir.IrMethod;
+import com.googlecode.dex2jar.ir.stmt.LabelStmt;
+import com.googlecode.dex2jar.ir.stmt.Stmt;
+
+import org.objectweb.asm2.ClassVisitor;
+import org.objectweb.asm2.ClassWriter;
+import org.objectweb.asm2.MethodVisitor;
+import org.objectweb.asm2.Opcodes;
 
 import java.io.File;
 import java.io.IOException;
@@ -27,22 +42,6 @@ import java.nio.file.spi.FileSystemProvider;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.googlecode.d2j.node.DexMethodNode;
-import com.googlecode.d2j.reader.BaseDexFileReader;
-import org.objectweb.asm2.ClassVisitor;
-import org.objectweb.asm2.ClassWriter;
-import org.objectweb.asm2.MethodVisitor;
-import org.objectweb.asm2.Opcodes;
-
-import com.googlecode.d2j.converter.IR2JConverter;
-import com.googlecode.d2j.node.DexFileNode;
-import com.googlecode.d2j.reader.DexFileReader;
-import com.googlecode.d2j.reader.zip.ZipUtil;
-import com.googlecode.dex2jar.ir.IrMethod;
-import com.googlecode.dex2jar.ir.stmt.LabelStmt;
-import com.googlecode.dex2jar.ir.stmt.Stmt;
-import org.objectweb.asm2.commons.Remapper;
-import org.objectweb.asm2.commons.RemappingClassAdapter;
 import top.niunaijun.obfuscator.ObfuscatorConfiguration;
 
 public class Dex2jar {
@@ -94,7 +93,21 @@ public class Dex2jar {
         ClassVisitorFactory cvf = new ClassVisitorFactory() {
             @Override
             public ClassVisitor create(final String name) {
-                final ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+                // COMPUTE_FRAMES: without stack map tables D8 falls back to its own
+                // type inference, which crashes on the state-machine control flow
+                // produced by the obfuscation chains (e.g. Invalid descriptor char).
+                // Types missing from the conversion classpath (app classes) degrade
+                // to java/lang/Object, keeping the common-super-class computation alive.
+                final ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES) {
+                    @Override
+                    protected String getCommonSuperClass(String type1, String type2) {
+                        try {
+                            return super.getCommonSuperClass(type1, type2);
+                        } catch (Throwable t) {
+                            return "java/lang/Object";
+                        }
+                    }
+                };
                 final LambadaNameSafeClassAdapter rca = new LambadaNameSafeClassAdapter(cw);
                 return new ClassVisitor(Opcodes.ASM5, rca) {
                     @Override
